@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 
 
-# ------------------ CONFIGURATION ------------------
+# ------------------ CONFIG ------------------
 OMDB_API_KEY = "92a7aba5"
 POSTER_CACHE = {}
 
@@ -21,7 +21,7 @@ SIM_FILE = "model/similarity.pkl"
 os.makedirs("model", exist_ok=True)
 
 
-# ------------------ DOWNLOAD FUNCTION ------------------
+# ------------------ DOWNLOAD ------------------
 def download_file(file_id, output_path):
     if not os.path.exists(output_path):
         with st.spinner(f"Downloading {output_path}..."):
@@ -36,7 +36,7 @@ download_file(MOVIE_FILE_ID, MOVIE_FILE)
 download_file(SIM_FILE_ID, SIM_FILE)
 
 
-# ------------------ LOAD PICKLE ------------------
+# ------------------ LOAD ------------------
 def load_pickle(path):
     try:
         with open(path, "rb") as f:
@@ -50,54 +50,48 @@ movies = load_pickle(MOVIE_FILE)
 similarity = load_pickle(SIM_FILE)
 
 
-# ------------------ UNIVERSAL TITLE EXTRACTOR ------------------
+# ------------------ HANDLE NUMPY ARRAY PROPERLY ------------------
 def extract_titles(data):
 
-    st.write("Loaded data type:", type(data))  # debug
+    st.write("Loaded movie data type:", type(data))
 
-    # Case 1: DataFrame
-    if isinstance(data, pd.DataFrame):
+    # ✅ If numpy array
+    if isinstance(data, np.ndarray):
+
+        # If it's 2D like [[title1], [title2]]
+        if data.ndim > 1:
+            data = data.flatten()
+
+        titles = data.tolist()
+
+    # If DataFrame
+    elif isinstance(data, pd.DataFrame):
         data.columns = data.columns.str.strip()
-        if "title" in data.columns:
-            titles = data["title"].tolist()
-        else:
+        if "title" not in data.columns:
             st.error("'title' column missing")
             st.stop()
+        titles = data["title"].tolist()
 
-    # Case 2: List
+    # If list
     elif isinstance(data, list):
         titles = data
 
-    # Case 3: Pandas Series
-    elif isinstance(data, pd.Series):
-        titles = data.tolist()
-
-    # Case 4: Numpy array
-    elif isinstance(data, np.ndarray):
-        titles = data.tolist()
-
-    # Case 5: Dictionary
-    elif isinstance(data, dict):
-        if "title" in data:
-            titles = data["title"]
-        else:
-            titles = list(data.values())
-
     else:
-        st.error(f"Unsupported data type: {type(data)}")
+        st.error(f"Unsupported movie data type: {type(data)}")
         st.stop()
 
-    # Clean titles
+    # Clean values
     clean_titles = []
+
     for t in titles:
-        if pd.notna(t):
+        if t is not None:
             clean_titles.append(str(t))
 
     if len(clean_titles) == 0:
         st.error("No valid movie titles found.")
         st.stop()
 
-    return sorted(list(set(clean_titles)))
+    return clean_titles
 
 
 movie_titles = extract_titles(movies)
@@ -131,10 +125,8 @@ def fetch_poster(movie_title):
 # ------------------ RECOMMEND ------------------
 def recommend(movie):
     try:
-        if isinstance(movies, pd.DataFrame):
-            index = movies[movies["title"] == movie].index[0]
-        else:
-            index = movie_titles.index(movie)
+        # Since yours is numpy array
+        index = movie_titles.index(movie)
 
         distances = sorted(
             list(enumerate(similarity[index])),
@@ -145,10 +137,7 @@ def recommend(movie):
         recommendations = []
 
         for i in distances[1:6]:
-            if isinstance(movies, pd.DataFrame):
-                title = str(movies.iloc[i[0]].title)
-            else:
-                title = movie_titles[i[0]]
+            title = movie_titles[i[0]]
 
             recommendations.append({
                 "title": title,
