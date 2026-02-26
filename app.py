@@ -5,6 +5,7 @@ import os
 import gdown
 from urllib.parse import quote
 import pandas as pd
+import numpy as np
 
 
 # ------------------ CONFIGURATION ------------------
@@ -24,15 +25,10 @@ os.makedirs("model", exist_ok=True)
 def download_file(file_id, output_path):
     if not os.path.exists(output_path):
         with st.spinner(f"Downloading {output_path}..."):
-            gdown.download(
-                id=file_id,
-                output=output_path,
-                quiet=False
-            )
+            gdown.download(id=file_id, output=output_path, quiet=False)
 
-        # Validate file size (avoid corrupted HTML file)
         if os.path.getsize(output_path) < 10000:
-            st.error("Downloaded file appears corrupted. Check Drive permissions.")
+            st.error("Downloaded file corrupted. Check Drive permission.")
             st.stop()
 
 
@@ -40,7 +36,7 @@ download_file(MOVIE_FILE_ID, MOVIE_FILE)
 download_file(SIM_FILE_ID, SIM_FILE)
 
 
-# ------------------ SAFE PICKLE LOAD ------------------
+# ------------------ LOAD PICKLE ------------------
 def load_pickle(path):
     try:
         with open(path, "rb") as f:
@@ -54,32 +50,54 @@ movies = load_pickle(MOVIE_FILE)
 similarity = load_pickle(SIM_FILE)
 
 
-# ------------------ CLEAN MOVIE TITLES ------------------
-def extract_titles(movies):
-    if isinstance(movies, list):
-        titles = movies
+# ------------------ UNIVERSAL TITLE EXTRACTOR ------------------
+def extract_titles(data):
 
-    elif isinstance(movies, pd.DataFrame):
-        movies.columns = movies.columns.str.strip()
+    st.write("Loaded data type:", type(data))  # debug
 
-        if "title" not in movies.columns:
-            st.error("'title' column missing in dataset")
+    # Case 1: DataFrame
+    if isinstance(data, pd.DataFrame):
+        data.columns = data.columns.str.strip()
+        if "title" in data.columns:
+            titles = data["title"].tolist()
+        else:
+            st.error("'title' column missing")
             st.stop()
 
-        titles = movies["title"].tolist()
+    # Case 2: List
+    elif isinstance(data, list):
+        titles = data
+
+    # Case 3: Pandas Series
+    elif isinstance(data, pd.Series):
+        titles = data.tolist()
+
+    # Case 4: Numpy array
+    elif isinstance(data, np.ndarray):
+        titles = data.tolist()
+
+    # Case 5: Dictionary
+    elif isinstance(data, dict):
+        if "title" in data:
+            titles = data["title"]
+        else:
+            titles = list(data.values())
 
     else:
-        st.error("Movie data format invalid")
+        st.error(f"Unsupported data type: {type(data)}")
         st.stop()
 
-    # 🔥 CRITICAL FIX
-    # Remove None, NaN, non-string and convert everything to string
+    # Clean titles
     clean_titles = []
     for t in titles:
         if pd.notna(t):
             clean_titles.append(str(t))
 
-    return sorted(list(set(clean_titles)))  # remove duplicates safely
+    if len(clean_titles) == 0:
+        st.error("No valid movie titles found.")
+        st.stop()
+
+    return sorted(list(set(clean_titles)))
 
 
 movie_titles = extract_titles(movies)
@@ -102,7 +120,7 @@ def fetch_poster(movie_title):
             POSTER_CACHE[movie_title] = data["Poster"]
             return data["Poster"]
 
-    except Exception:
+    except:
         pass
 
     fallback = "https://via.placeholder.com/500x750?text=Poster+Not+Available"
@@ -110,13 +128,13 @@ def fetch_poster(movie_title):
     return fallback
 
 
-# ------------------ RECOMMEND FUNCTION ------------------
+# ------------------ RECOMMEND ------------------
 def recommend(movie):
     try:
-        if isinstance(movies, list):
-            index = movies.index(movie)
-        else:
+        if isinstance(movies, pd.DataFrame):
             index = movies[movies["title"] == movie].index[0]
+        else:
+            index = movie_titles.index(movie)
 
         distances = sorted(
             list(enumerate(similarity[index])),
@@ -127,14 +145,14 @@ def recommend(movie):
         recommendations = []
 
         for i in distances[1:6]:
-            if isinstance(movies, list):
-                movie_title = str(movies[i[0]])
+            if isinstance(movies, pd.DataFrame):
+                title = str(movies.iloc[i[0]].title)
             else:
-                movie_title = str(movies.iloc[i[0]].title)
+                title = movie_titles[i[0]]
 
             recommendations.append({
-                "title": movie_title,
-                "poster": fetch_poster(movie_title)
+                "title": title,
+                "poster": fetch_poster(title)
             })
 
         return recommendations
@@ -144,42 +162,23 @@ def recommend(movie):
         return []
 
 
-# ------------------ STREAMLIT UI ------------------
+# ------------------ UI ------------------
 st.set_page_config(page_title="Movie Recommender", layout="wide")
 
 st.title("🍿 Movie Recommender System")
 
-if len(movie_titles) == 0:
-    st.error("No movies available to display.")
-    st.stop()
+selected_movie = st.selectbox("Select a movie you like:", movie_titles)
 
-selected_movie = st.selectbox(
-    "Select a movie you like:",
-    movie_titles
-)
-
-if st.button("Get Recommendations", type="primary"):
+if st.button("Get Recommendations"):
 
     with st.spinner("Finding similar movies..."):
-        recommendations = recommend(selected_movie)
+        recs = recommend(selected_movie)
 
-    if not recommendations:
+    if not recs:
         st.warning("No recommendations found.")
     else:
-        st.subheader(f"Movies similar to: {selected_movie}")
-
         cols = st.columns(5)
 
-        for i, movie in enumerate(recommendations):
+        for i, movie in enumerate(recs):
             with cols[i]:
-                st.image(
-                    movie["poster"],
-                    width=150,
-                    caption=movie["title"]
-                )
-
-st.markdown("---")
-st.caption(
-    "Recommendations are based on content similarity. "
-    "Poster availability depends on OMDB API."
-)
+                st.image(movie["poster"], width=150, caption=movie["title"])
