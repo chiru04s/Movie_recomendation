@@ -5,6 +5,7 @@ import os
 import gdown
 from urllib.parse import quote
 import pandas as pd
+import numpy as np
 
 
 # ------------------ CONFIGURATION ------------------
@@ -28,14 +29,14 @@ def download_file(file_id, output_path):
     if not os.path.exists(output_path):
         with st.spinner(f"Downloading {output_path}..."):
             gdown.download(
-                id=file_id,          # ✅ IMPORTANT FIX
+                id=file_id,          # ✅ correct method for large files
                 output=output_path,
                 quiet=False
             )
 
-        # 🔍 Validate file size (detect HTML instead of pickle)
+        # Validate file size (avoid HTML download issue)
         if os.path.getsize(output_path) < 10000:
-            st.error("Downloaded file appears corrupted (too small). Check Google Drive permissions.")
+            st.error("Downloaded file appears corrupted. Check Google Drive permissions.")
             st.stop()
 
 
@@ -44,7 +45,7 @@ download_file(MOVIE_FILE_ID, MOVIE_FILE)
 download_file(SIM_FILE_ID, SIM_FILE)
 
 
-# ------------------ LOAD DATA SAFELY ------------------
+# ------------------ LOAD PICKLE SAFELY ------------------
 def load_pickle(path):
     try:
         with open(path, "rb") as f:
@@ -59,8 +60,8 @@ similarity = load_pickle(SIM_FILE)
 
 
 # ------------------ DATA FORMAT SAFETY CHECK ------------------
-if isinstance(movies, list):
-    movie_titles = movies
+if isinstance(movies, (list, np.ndarray)):
+    movie_titles = list(movies)
 
 elif isinstance(movies, pd.DataFrame):
     movies.columns = movies.columns.str.strip()
@@ -106,8 +107,8 @@ def fetch_poster(movie_title):
 # ------------------ RECOMMEND FUNCTION ------------------
 def recommend(movie):
     try:
-        if isinstance(movies, list):
-            index = movies.index(movie)
+        if isinstance(movies, (list, np.ndarray)):
+            index = list(movies).index(movie)
         else:
             index = movies[movies["title"] == movie].index[0]
 
@@ -120,7 +121,8 @@ def recommend(movie):
         recommendations = []
 
         for i in distances[1:6]:
-            if isinstance(movies, list):
+
+            if isinstance(movies, (list, np.ndarray)):
                 movie_title = movies[i[0]]
             else:
                 movie_title = movies.iloc[i[0]].title
