@@ -4,14 +4,11 @@ import requests
 import os
 import gdown
 from urllib.parse import quote
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-
-# ------------------ CONFIG ------------------
+# ---------------- CONFIG ----------------
 OMDB_API_KEY = "92a7aba5"
-POSTER_CACHE = {}
-
 MOVIE_FILE_ID = "1Y01dyve2v34b9BToyt_j3wqLWd4KqL5y"
 SIM_FILE_ID = "1Vs739G-DtThLGnAFPPAt0ZOSn_nHRQy3"
 
@@ -20,154 +17,87 @@ SIM_FILE = "model/similarity.pkl"
 
 os.makedirs("model", exist_ok=True)
 
-
-# ------------------ DOWNLOAD ------------------
+# ---------------- DOWNLOAD ----------------
 def download_file(file_id, output_path):
     if not os.path.exists(output_path):
-        with st.spinner(f"Downloading {output_path}..."):
-            gdown.download(id=file_id, output=output_path, quiet=False)
-
-        if os.path.getsize(output_path) < 10000:
-            st.error("Downloaded file corrupted. Check Drive permission.")
-            st.stop()
-
+        gdown.download(id=file_id, output=output_path, quiet=False)
 
 download_file(MOVIE_FILE_ID, MOVIE_FILE)
 download_file(SIM_FILE_ID, SIM_FILE)
 
-
-# ------------------ LOAD ------------------
+# ---------------- LOAD ----------------
 def load_pickle(path):
-    try:
-        with open(path, "rb") as f:
-            return pickle.load(f)
-    except Exception as e:
-        st.error(f"Failed to load {path}: {e}")
-        st.stop()
+    with open(path, "rb") as f:
+        return pickle.load(f)
 
-
-movies = load_pickle(MOVIE_FILE)
+movies_raw = load_pickle(MOVIE_FILE)
 similarity = load_pickle(SIM_FILE)
 
+# ---------------- FORCE SAFE TITLE EXTRACTION ----------------
+def force_extract_titles(data):
 
-# ------------------ HANDLE NUMPY ARRAY PROPERLY ------------------
-def extract_titles(data):
+    # Convert everything to list safely
+    if isinstance(data, pd.DataFrame):
+        if "title" in data.columns:
+            titles = data["title"].tolist()
+        else:
+            titles = data.iloc[:, 0].tolist()
 
-    st.write("Loaded movie data type:", type(data))
+    elif isinstance(data, np.ndarray):
+        titles = data.flatten().tolist()
 
-    # ✅ If numpy array
-    if isinstance(data, np.ndarray):
-
-        # If it's 2D like [[title1], [title2]]
-        if data.ndim > 1:
-            data = data.flatten()
-
-        titles = data.tolist()
-
-    # If DataFrame
-    elif isinstance(data, pd.DataFrame):
-        data.columns = data.columns.str.strip()
-        if "title" not in data.columns:
-            st.error("'title' column missing")
-            st.stop()
-        titles = data["title"].tolist()
-
-    # If list
     elif isinstance(data, list):
         titles = data
 
     else:
-        st.error(f"Unsupported movie data type: {type(data)}")
-        st.stop()
+        titles = list(data)
 
-    # Clean values
-    clean_titles = []
-
+    # Clean
+    clean = []
     for t in titles:
         if t is not None:
-            clean_titles.append(str(t))
+            clean.append(str(t).strip())
 
-    if len(clean_titles) == 0:
-        st.error("No valid movie titles found.")
-        st.stop()
+    return clean
 
-    return clean_titles
+movie_titles = force_extract_titles(movies_raw)
 
+# Extra safety check
+if len(movie_titles) != len(similarity):
+    st.error("Titles and similarity matrix length mismatch.")
+    st.stop()
 
-movie_titles = extract_titles(movies)
-
-
-# ------------------ FETCH POSTER ------------------
-def fetch_poster(movie_title):
-
-    if movie_title in POSTER_CACHE:
-        return POSTER_CACHE[movie_title]
-
+# ---------------- POSTER ----------------
+def fetch_poster(title):
     try:
-        encoded_title = quote(movie_title)
-        url = f"http://www.omdbapi.com/?t={encoded_title}&apikey={OMDB_API_KEY}"
-
-        response = requests.get(url, timeout=5)
-        data = response.json()
-
+        url = f"http://www.omdbapi.com/?t={quote(title)}&apikey={OMDB_API_KEY}"
+        data = requests.get(url, timeout=5).json()
         if data.get("Response") == "True" and data.get("Poster") not in ["N/A", None]:
-            POSTER_CACHE[movie_title] = data["Poster"]
             return data["Poster"]
-
     except:
         pass
+    return "https://via.placeholder.com/500x750?text=No+Poster"
 
-    fallback = "https://via.placeholder.com/500x750?text=Poster+Not+Available"
-    POSTER_CACHE[movie_title] = fallback
-    return fallback
-
-
-# ------------------ RECOMMEND ------------------
+# ---------------- RECOMMEND ----------------
 def recommend(movie):
-    try:
-        # Since yours is numpy array
-        index = movie_titles.index(movie)
+    index = movie_titles.index(movie)
+    distances = sorted(
+        list(enumerate(similarity[index])),
+        key=lambda x: x[1],
+        reverse=True
+    )
+    return [movie_titles[i[0]] for i in distances[1:6]]
 
-        distances = sorted(
-            list(enumerate(similarity[index])),
-            reverse=True,
-            key=lambda x: x[1]
-        )
-
-        recommendations = []
-
-        for i in distances[1:6]:
-            title = movie_titles[i[0]]
-
-            recommendations.append({
-                "title": title,
-                "poster": fetch_poster(title)
-            })
-
-        return recommendations
-
-    except Exception as e:
-        st.error(f"Recommendation error: {e}")
-        return []
-
-
-# ------------------ UI ------------------
+# ---------------- UI ----------------
 st.set_page_config(page_title="Movie Recommender", layout="wide")
+st.title("🍿 Movie Recommender")
 
-st.title("🍿 Movie Recommender System")
+selected_movie = st.selectbox("Select a movie:", movie_titles)
 
-selected_movie = st.selectbox("Select a movie you like:", movie_titles)
-
-if st.button("Get Recommendations"):
-
-    with st.spinner("Finding similar movies..."):
-        recs = recommend(selected_movie)
-
-    if not recs:
-        st.warning("No recommendations found.")
-    else:
-        cols = st.columns(5)
-
-        for i, movie in enumerate(recs):
-            with cols[i]:
-                st.image(movie["poster"], width=150, caption=movie["title"])
+if st.button("Recommend"):
+    results = recommend(selected_movie)
+    cols = st.columns(5)
+    for i, title in enumerate(results):
+        with cols[i]:
+            st.image(fetch_poster(title), width=150)
+            st.caption(title)
