@@ -8,7 +8,7 @@ import pandas as pd
 
 
 # ------------------ CONFIGURATION ------------------
-OMDB_API_KEY = "92a7aba5"  # Your OMDB API key
+OMDB_API_KEY = "92a7aba5"
 POSTER_CACHE = {}
 
 # Google Drive File IDs
@@ -23,22 +23,59 @@ SIM_FILE = "model/similarity.pkl"
 os.makedirs("model", exist_ok=True)
 
 
-# ------------------ DOWNLOAD FILES IF NOT EXISTS ------------------
-if not os.path.exists(MOVIE_FILE):
-    with st.spinner("Downloading movie data..."):
-        gdown.download(
-            f"https://drive.google.com/uc?id={MOVIE_FILE_ID}",
-            MOVIE_FILE,
-            quiet=False
-        )
+# ------------------ DOWNLOAD FUNCTION ------------------
+def download_file(file_id, output_path):
+    if not os.path.exists(output_path):
+        with st.spinner(f"Downloading {output_path}..."):
+            gdown.download(
+                id=file_id,          # ✅ IMPORTANT FIX
+                output=output_path,
+                quiet=False
+            )
 
-if not os.path.exists(SIM_FILE):
-    with st.spinner("Downloading similarity data..."):
-        gdown.download(
-            f"https://drive.google.com/uc?id={SIM_FILE_ID}",
-            SIM_FILE,
-            quiet=False
-        )
+        # 🔍 Validate file size (detect HTML instead of pickle)
+        if os.path.getsize(output_path) < 10000:
+            st.error("Downloaded file appears corrupted (too small). Check Google Drive permissions.")
+            st.stop()
+
+
+# ------------------ DOWNLOAD FILES ------------------
+download_file(MOVIE_FILE_ID, MOVIE_FILE)
+download_file(SIM_FILE_ID, SIM_FILE)
+
+
+# ------------------ LOAD DATA SAFELY ------------------
+def load_pickle(path):
+    try:
+        with open(path, "rb") as f:
+            return pickle.load(f)
+    except Exception as e:
+        st.error(f"❌ Failed to load {path}: {e}")
+        st.stop()
+
+
+movies = load_pickle(MOVIE_FILE)
+similarity = load_pickle(SIM_FILE)
+
+
+# ------------------ DATA FORMAT SAFETY CHECK ------------------
+if isinstance(movies, list):
+    movie_titles = movies
+
+elif isinstance(movies, pd.DataFrame):
+    movies.columns = movies.columns.str.strip()
+
+    if "title" in movies.columns:
+        movie_titles = movies["title"].values
+    else:
+        st.error("❌ 'title' column not found in movie data.")
+        st.write("Available columns:", movies.columns)
+        st.stop()
+
+else:
+    st.write("Loaded type:", type(movies))
+    st.error("❌ Movie data format is incorrect.")
+    st.stop()
 
 
 # ------------------ FETCH POSTER FUNCTION ------------------
@@ -66,37 +103,8 @@ def fetch_poster(movie_title):
     return fallback
 
 
-# ------------------ LOAD DATA ------------------
-try:
-    movies = pickle.load(open(MOVIE_FILE, "rb"))
-    similarity = pickle.load(open(SIM_FILE, "rb"))
-except Exception as e:
-    st.error(f"❌ Failed to load model files: {e}")
-    st.stop()
-
-
-# ------------------ DATA FORMAT SAFETY CHECK ------------------
-if isinstance(movies, list):
-    movie_titles = movies
-
-elif isinstance(movies, pd.DataFrame):
-    movies.columns = movies.columns.str.strip()
-
-    if "title" in movies.columns:
-        movie_titles = movies["title"].values
-    else:
-        st.error("❌ 'title' column not found in movie data.")
-        st.write("Available columns:", movies.columns)
-        st.stop()
-
-else:
-    st.error("❌ Movie data format is incorrect.")
-    st.stop()
-
-
 # ------------------ RECOMMEND FUNCTION ------------------
 def recommend(movie):
-
     try:
         if isinstance(movies, list):
             index = movies.index(movie)
@@ -112,7 +120,6 @@ def recommend(movie):
         recommendations = []
 
         for i in distances[1:6]:
-
             if isinstance(movies, list):
                 movie_title = movies[i[0]]
             else:
@@ -135,15 +142,11 @@ st.set_page_config(page_title="Movie Recommender", layout="wide")
 
 st.title("🍿 Movie Recommender System")
 
-
-# ------------------ MOVIE SELECT ------------------
 selected_movie = st.selectbox(
     "Select a movie you like:",
     movie_titles
 )
 
-
-# ------------------ RECOMMEND BUTTON ------------------
 if st.button("Get Recommendations", type="primary"):
 
     with st.spinner("Finding similar movies..."):
@@ -165,7 +168,6 @@ if st.button("Get Recommendations", type="primary"):
                 )
 
 
-# ------------------ FOOTER ------------------
 st.markdown("---")
 st.caption(
     "Recommendations are based on content similarity. "

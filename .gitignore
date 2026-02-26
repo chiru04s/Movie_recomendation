@@ -1,4 +1,7 @@
 model/similarity.pkl
 venv/
 __pycache__/
+*.pklmodel/
 *.pkl
+venv/
+__pycache__/
